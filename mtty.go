@@ -1,11 +1,10 @@
-package main
+package mtty
 
 import (
 	"bufio"
 	"fmt"
 	"io"
 	"io/ioutil"
-	"os"
 	"os/exec"
 	"regexp"
 	"strings"
@@ -18,7 +17,6 @@ import (
 // run :o to list options for opening the file at line
 // vim should have been run using a command such as vim --servername vim
 // TODO Unit Test for Open function to get it working.
-// TODO Refactor into neat package.
 var fileReg = regexp.MustCompile(`\S+:[0-9]+:?[0-9]?`)
 
 type filelinecol struct {
@@ -35,10 +33,13 @@ func split(flc string) filelinecol {
 	if len(s) == 3 {
 		return filelinecol{s[0], s[1], s[2]}
 	}
+	if len(s) == 4 {
+		return filelinecol{s[0], s[1], s[2]}
+	}
 	panic(string(flc))
 }
 
-type mtty struct {
+type Mtty struct {
 	lastOut []byte //Make buffer we can read and write to.
 
 	Stdout io.Writer
@@ -46,35 +47,43 @@ type mtty struct {
 	Stdin  io.Reader
 }
 
-func (m *mtty) Save(filename string) error {
+func (m *Mtty) Save(filename string) error {
 	return ioutil.WriteFile(filename, m.lastOut, 0777)
 }
 
-func (m *mtty) Open() {
-	options := fileReg.FindAll(m.lastOut, 0)
-	for option := range options {
-		fmt.Fprintln(m.Stdout, string(option))
-		flc := split(string(option))
-		fmt.Fprintln(m.Stdout, flc)
+func (m *Mtty) Open() {
+	options := fileReg.FindAllString(string(m.lastOut), -1)
+	if len(options) == 0 {
+		return
 	}
-	//exec.Command("vim", "--remote", "+7", "main.go").Run() // TODO Work on regexp
-
+	opts := make([]filelinecol, len(options))
+	for i, option := range options {
+		fmt.Fprintf(m.Stdout, "%d) %s\n", i, string(option))
+		opts[i] = split(string(option))
+	}
+	fmt.Println(opts)
+	exec.Command(
+		"vim",
+		"--remote",
+		fmt.Sprintf("+%s", opts[0].line),
+		opts[0].filename,
+	).Run()
 }
 
-func (m *mtty) SetLastOut(b []byte) {
+func (m *Mtty) SetLastOut(b []byte) {
 	m.lastOut = b
 }
 
-func (m *mtty) runCommand(cmdS string) {
+func (m *Mtty) runCommand(cmdS string) {
 	sp := strings.Split(cmdS, " ")
 	cmd := exec.Command(sp[0], sp[1:]...)
 	cout, _ := cmd.CombinedOutput()
 	fmt.Fprint(m.Stdout, string(cout))
-	m.lastOut = cout
+	m.SetLastOut(cout)
 }
 
-func loop(in io.Reader, out, errOut io.Writer) {
-	tty := mtty{
+func Loop(in io.Reader, out, errOut io.Writer) {
+	tty := Mtty{
 		Stdout: out,
 		Stderr: errOut,
 		Stdin:  in,
@@ -100,8 +109,4 @@ func loop(in io.Reader, out, errOut io.Writer) {
 	if err := scanner.Err(); err != nil {
 		fmt.Fprintln(errOut, "reading standard input:", err)
 	}
-}
-
-func main() {
-	loop(os.Stdin, os.Stdout, os.Stderr)
 }
